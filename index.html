@@ -365,7 +365,7 @@ const LV_EN=[
 const MODE_EN={level:'Level Challenge',daily:'Daily Challenge',punch:'20s Palm Slap'};
 const OPP_EN=['Grumpy Boss','Blame Dodger','Nightmare Customer','Meeting Monster'];
 const PART_EN={core:'Bullseye',head:'Head',armL:'Arm',armR:'Arm',footL:'Foot',footR:'Foot',belly:'Belly'};
-LEVELS.forEach((l,i)=>{ l.nEn=LV_EN[i][0]; l.ruleEn=LV_EN[i][1]; });
+LEVELS.forEach((l,i)=>{ l.nEn=LV_EN[i][0]; l.ruleEn=LV_EN[i][1]; l.ctrEvery=Math.max(6,15-i); l.ctrP=Math.min(.95,.5+i*.05); l.ctrBurst=i<4?1:i<7?2:3; l.ctrT=Math.max(.7,1.15-i*.05); });
 
 /* =====================================================================
    存檔（localStorage 失效時退回記憶體）
@@ -475,7 +475,10 @@ const SFX = {
   punch:()=>{ noise(.09,.35,1500); tone(150,.1,'square',.08,70); },
   win:()=>[523,659,784,1046].forEach((f,i)=>tone(f,.22,'triangle',.15,0,i*.12)),
   lose:()=>[392,330,262].forEach((f,i)=>tone(f,.25,'sine',.12,0,i*.15)),
-  buy:()=>[784,988,1318].forEach((f,i)=>tone(f,.12,'triangle',.12,0,i*.06))
+  buy:()=>[784,988,1318].forEach((f,i)=>tone(f,.12,'triangle',.12,0,i*.06)),
+  warn:()=>{ tone(900,.1,'square',.09); tone(900,.1,'square',.09,0,.14); },
+  swat:()=>{ noise(.07,.3,2500); tone(520,.1,'triangle',.12,900); },
+  oops:()=>{ tone(200,.25,'sawtooth',.12,70); noise(.1,.25,500); }
 };
 function vib(ms){ if(S.settings.vibrate && navigator.vibrate){ try{ navigator.vibrate(ms); }catch(e){} } }
 
@@ -560,7 +563,7 @@ let ptr=null;
 
 function makeTarget(i){
   return {i,x:W/2,y:H*.42,size:1,rot:0,rotV:0,sx:1,sy:1,sxV:0,syV:0,kx:0,kxV:0,hop:0,hopV:0,
-    hurt:0,dizzy:0,dx:0,dxT:0,dodgeT:rand(1,2),dents:[],bumps:[],slaps:0,swell:0,hs:1,alpha:1,ph:rand(0,6),look:{x:0,y:0},lastHit:-99};
+    hurt:0,dizzy:0,dx:0,dxT:0,dodgeT:rand(1,2),dents:[],wind:0,bumps:[],slaps:0,swell:0,hs:1,alpha:1,ph:rand(0,6),look:{x:0,y:0},lastHit:-99};
 }
 function pw(t,p){
   const s=U*t.size, hs=p.id==='head'?(t.hs||1):1;
@@ -580,11 +583,11 @@ function startGame(mode,lv){
   clearTimeout(endTimer);
   let cfg=Object.assign({},LEVELS[lv]);
   if(mode==='daily'){ cfg.goal=Math.round(cfg.goal*1.2/10)*10; cfg.time=Math.max(cfg.time,40); }
-  if(mode==='punch'){ cfg=Object.assign({},LEVELS[0],{n:'掌拍狂歡',nEn:'Palm Slap Frenzy',time:20,ammo:0,goal:300,wind:0,ax:.08,sp:1,mult:1}); }
+  if(mode==='punch'){ cfg=Object.assign({},LEVELS[0],{n:'掌拍狂歡',nEn:'Palm Slap Frenzy',ctrEvery:0,time:20,ammo:0,goal:300,wind:0,ax:.08,sp:1,mult:1}); }
   const n=cfg.queue?3:1;
   G={mode,lv,cfg,state:'intro',time:cfg.time,ammo:mode==='punch'?0:cfg.ammo,score:0,combo:0,maxCombo:0,hits:0,throws:0,
      balls:[],targets:[],cool:0,endT:0,clock:0,shieldAmt:0,coreId:'head',coreT:0,wph:rand(0,6),prop:propById(S.prop),punchCd:0,
-     queueBonus:0,gotGoal:false};
+     queueBonus:0,gotGoal:false,ctrs:[],ctrPending:0,ctrDelay:0,ctrT:cfg.ctrEvery*rand(.5,.9),cNum:0,cSwat:0,cHit:0};
   for(let i=0;i<n;i++) G.targets.push(makeTarget(i));
   parts.length=0; texts.length=0; fxl.length=0; slapfx.length=0; ptr=null;
   if(mode!=='daily' && mode!=='punch'){ S.lastLevel=lv; save(); }
@@ -596,7 +599,7 @@ function startGame(mode,lv){
   $('#inRule').textContent = mode==='punch' ? T('20 秒內用手掌狂拍對方！拍越多，對方的臉越腫越大（停手 1.2 秒連擊會中斷）。','Slap your rival with your palm for 20 seconds! The more you slap, the more swollen and lumpy the face gets (combo breaks after 1.2s idle).') : lvRule(cfg);
   $('#inGoal').textContent = T('目標 '+cfg.goal+' 分'+(mode==='punch'?'':'・道具 '+cfg.ammo+' 個・'+cfg.time+' 秒'),'Goal: '+cfg.goal+' pts'+(mode==='punch'?'':' · '+cfg.ammo+' items · '+cfg.time+'s'));
   $('#inHow').innerHTML = mode==='punch' ? T('用手指點布偶，手掌就會拍下去；按住會連續拍打。','Tap the plush to slap it with a palm. Hold to keep slapping.') :
-    T('手指往下拉再放開，布偶就會被丟中！<br>拉越遠越用力，畫面會顯示落點。直接點布偶可以拍一巴掌。','Pull down with your finger, then release to throw!<br>The farther you pull, the harder it flies. The landing mark is shown. Tap the plush to slap it.');
+    T('手指往下拉再放開，布偶就會被丟中！<br>拉越遠越用力，畫面會顯示落點。直接點布偶可以拍一巴掌。<br>小心！對手偶爾會反擊，點一下飛來的東西就能擋下！','Pull down with your finger, then release to throw!<br>The farther you pull, the harder it flies. The landing mark is shown. Tap the plush to slap it.<br>Watch out! Rivals sometimes fight back. Tap the incoming object to swat it away!');
   $('#propb').style.display = mode==='punch'?'none':'';
   $('#propb').textContent=G.prop.e;
   [ '#s1','#s2','#s3' ].forEach((id,i)=>{ const b=$(id); b.style.left=(STAR_X[i]/STAR_X[2]*100)+'%'; b.classList.remove('got'); });
@@ -621,7 +624,7 @@ function leaveGame(){
 function rankIdx(xp){ let r=0; RANKS.forEach((k,i)=>{ if(xp>=k.xp) r=i; }); return r; }
 function endGame(){
   if(!G || G.state==='end') return;
-  G.state='end'; ptr=null;
+  G.state='end'; ptr=null; G.ctrs=[]; G.ctrPending=0;
   const isPunch=G.mode==='punch';
   const acc = G.throws? G.hits/G.throws : 0;
   const accB = isPunch?0:Math.round(acc*100)*2, comboB=G.maxCombo*10;
@@ -668,6 +671,7 @@ function showResult(){
   if(G.mode!=='punch') add(T('準確度加成','Accuracy bonus'),'+'+r.accB);
   add(T('連擊加成','Combo bonus'),'+'+r.comboB);
   add(T('過關目標','Goal'),String(G.cfg.goal));
+  if(G.cNum>0) add(T('擋下反擊','Counters swatted'),G.cSwat+' / '+G.cNum);
   $('#rCoin').textContent='🪙 +'+r.coins; $('#rXp').textContent=T('經驗 +','XP +')+r.xp;
   $('#rBonus').textContent=r.bonus;
   const ri=rankIdx(S.xp), cur=RANKS[ri], nx=RANKS[ri+1];
@@ -834,6 +838,7 @@ cv.addEventListener('pointerdown',e=>{
   const hit=targetAt(x,y);
   if(!G){ if(hit){ impact(hit.t,x,y,.7,hit.p); addSlap(x,y,hit.t); SFX.punch(); burst(x,y,8,.7); } return; }
   if(G.state!=='play') return;
+  if(swatAt(x,y)) return;
   if(hit){ ptr={id:e.pointerId,mode:'punch',x,y,cd:G.mode==='punch'?.14:.3}; doPunch(hit.t,hit.p,x,y); }
   else if(G.mode!=='punch'){ ptr={id:e.pointerId,mode:'aim',sx:x,sy:y,x,y}; }
 });
@@ -862,6 +867,7 @@ function updTargets(dt,sd){
     t.size=(G?1:.8)*cfg.size*(pmode?.85:1);
     const bx = n===3 ? W/2+(i-1)*W*.29 : W/2, by = n===3 ? H*.46 : (pmode?H*.52:(G?H*.42:H*.4));
     t.swell+=((1-Math.exp(-t.slaps/55))-t.swell)*Math.min(1,sd*10); t.hs=1+.8*t.swell;
+    { const warn=!!(G&&G.ctrs&&G.ctrs.some(c=>c.state==='warn'&&c.th===t)); t.wind+=((warn?1:0)-t.wind)*Math.min(1,sd*14); }
     if(G&&G.state!=='pause'&&cfg.dodge&&G.state==='play'){
       t.dodgeT-=sd;
       if(t.dodgeT<=0){
@@ -872,7 +878,7 @@ function updTargets(dt,sd){
     }
     t.dx+=(t.dxT-t.dx)*Math.min(1,sd*9);
     const sway = G && G.state==='intro' ? .4 : 1;
-    t.x=clamp(bx+Math.sin(time*cfg.sp*1.3+t.ph)*cfg.ax*W*sway+t.dx, U*.7, W-U*.7);
+    t.x=clamp(bx+Math.sin(time*cfg.sp*1.3+t.ph)*cfg.ax*W*sway+t.dx, U*.7, W-U*(cfg.st.acc==='pan'?1.05:.7));
     t.y=by+Math.sin(time*1.7+t.ph)*U*.02;
     // 彈簧
     t.sxV+=(-150*(t.sx-1)-9*t.sxV)*sd; t.sx+=t.sxV*sd;
@@ -888,6 +894,53 @@ function updTargets(dt,sd){
     t.alpha = cfg.ghost ? clamp(.5+.62*Math.sin(time*1.2+t.ph),.12,1) : 1;
   });
 }
+const CTR_EMOJI={boss:'💼',clock:'⏰',headset:'📊',crown:'📣',hourglass:'⌛',ghost:'💬',ticket:'🎫',robot:'🔩',boss2:'☄️'};
+function startCounter(){
+  const vis=G.targets.filter(t=>!(G.cfg.ghost&&t.alpha<.5));
+  if(!vis.length) return false;
+  const th=vis[(Math.random()*vis.length)|0];
+  G.ctrs.push({state:'warn',w:.5,th,t:0,T:G.cfg.ctrT,type:G.cfg.st.acc,spin:0,vs:rand(-8,8),x:th.x,y:th.y,r:0,life:0,vx:0,vy:0,sx0:0,sy0:0,ex:SX+rand(-.2,.2)*W,ey:H*.7});
+  G.cNum++; SFX.warn();
+  if(G.cNum===1){ const m=T('反擊來了！點一下飛來的東西擋下它！','Incoming! Tap the object to swat it away!'); $('#tip').textContent=m; setTimeout(()=>{ if($('#tip').textContent===m) $('#tip').textContent=''; },2600); }
+  return true;
+}
+function updCounter(c,sd){
+  const th=c.th, sz=U*th.size;
+  if(c.state==='warn'){
+    c.w-=sd; c.x=th.x+sz*.7; c.y=th.y;
+    if(c.w<=0){ c.state='fly'; c.t=0; c.sx0=th.x+sz*.7; c.sy0=th.y-sz*.1; th.sx=.88; th.sy=1.14; th.hopV=-150*(U/120); th.rotV+=-2; SFX.throw(); }
+  } else if(c.state==='fly'){
+    c.t+=sd/c.T; c.spin+=c.vs*sd;
+    const k=Math.min(c.t,1);
+    c.x=lerp(c.sx0,c.ex,k); c.y=lerp(c.sy0,c.ey,k)-Math.sin(Math.PI*k)*H*.08;
+    c.r=U*.28*(c.type==='pan'?1.3:1)*lerp(.35,1.8,Math.pow(k,1.3));
+    if(c.t>=1) counterHit(c);
+  } else if(c.state==='swat'||c.state==='splat'){
+    c.life-=sd; c.x+=c.vx*sd; c.y+=c.vy*sd; if(c.state==='swat') c.vy+=500*sd; c.spin+=c.vs*sd*2;
+    if(c.life<=0) c.state='done';
+  }
+}
+function counterHit(c){
+  c.state='splat'; c.life=.5; c.vx=0; c.vy=0;
+  G.combo=0; G.score=Math.max(0,G.score-15); G.cHit++;
+  addText(c.x,c.y-30,T('被反擊！ -15','Counter-hit! -15'),'#ff7a7a',28);
+  burst(c.x,c.y,18,1); SFX.oops(); vib(40);
+  if(!S.settings.calm) shakeAmt=Math.max(shakeAmt,10);
+  updHUD();
+}
+function swatAt(x,y){
+  if(!G||G.state!=='play') return false;
+  for(const c of G.ctrs){
+    if(c.state!=='fly') continue;
+    if(Math.hypot(x-c.x,y-c.y)<c.r*1.35+14){
+      c.state='swat'; c.life=.7; c.vx=(c.x<SX?-1:1)*rand(200,380); c.vy=-rand(260,420); c.vs=rand(10,18);
+      G.cSwat++; G.score+=20;
+      addText(c.x,c.y-20,T('擋下反擊！+20','Swatted! +20'),'#9fffc8',26); burst(c.x,c.y,10,.9); SFX.swat(); vib(15); updHUD();
+      return true;
+    }
+  }
+  return false;
+}
 function update(dt){
   time+=dt;
   if(!demoT) demoT=makeTarget(0);
@@ -900,6 +953,11 @@ function update(dt){
       if(G.time<=0){ G.time=0; endGame(); }
       if(G.cfg.shield){ const on=(G.clock%5)>2.8; G.shieldAmt+=((on?1:0)-G.shieldAmt)*Math.min(1,sd*6); }
       if(G.cfg.core){ G.coreT-=sd; if(G.coreT<=0){ G.coreT=2.2; const ids=['head','belly','armL','armR'].filter(i=>i!==G.coreId); G.coreId=ids[(Math.random()*ids.length)|0]; } }
+      if(G.cfg.ctrEvery>0 && G.clock>4){
+        G.ctrT-=sd;
+        if(G.ctrT<=0){ G.ctrT=G.cfg.ctrEvery*rand(.7,1.3); if(Math.random()<G.cfg.ctrP) G.ctrPending=1+Math.floor(Math.random()*G.cfg.ctrBurst); }
+      }
+      if(G.ctrPending>0){ G.ctrDelay-=sd; if(G.ctrDelay<=0){ if(startCounter()){ G.ctrPending--; G.ctrDelay=.9; } else G.ctrDelay=.4; } }
       if(G.mode==='punch' && G.combo>0 && G.clock-(G.punchLast||0)>1.2){ G.combo=0; updHUD(); }
       if(ptr&&ptr.mode==='punch'){
         ptr.cd-=dt;
@@ -921,6 +979,8 @@ function update(dt){
       }
     }
     G.balls=G.balls.filter(b=>b.life<=0&&b.state==='bounce'?false:true);
+    for(const c of G.ctrs) updCounter(c,sd);
+    G.ctrs=G.ctrs.filter(c=>c.state!=='done');
   }
   updTargets(dt,sd);
   // 粒子 / 文字 / 特效
@@ -973,12 +1033,12 @@ function drawPlush(c,t,cfg,coreId,shieldAmt){
   // 手
   const sw=Math.sin(time*2+t.ph)*.08-t.rot*.5;
   c.save(); c.translate(-.5,-.1); c.rotate(.35+sw); blob(c,0,.15,.16,.28,st); c.restore();
-  c.save(); c.translate(.5,-.1); c.rotate(-.35-sw); blob(c,0,.15,.16,.28,st); c.restore();
+  c.save(); c.translate(.5,-.1); c.rotate(-.35-sw-t.wind*2.5); blob(c,0,.15,.16,.28,st); c.restore();
   if(st.acc==='pan'){
-    c.save(); c.translate(.66,.22); c.rotate(.5);
-    c.fillStyle='#8a5a2b'; rr(c,-.035,-.05,.07,.38,.03); c.fill();
-    c.fillStyle='#3a3a48'; c.beginPath(); c.ellipse(0,-.16,.2,.2,0,0,TAU); c.fill();
-    c.fillStyle='rgba(255,255,255,.25)'; c.beginPath(); c.ellipse(-.06,-.22,.07,.05,-.5,0,TAU); c.fill(); c.restore();
+    c.save(); c.translate(.64,.2-t.wind*.3); c.rotate(.15-t.wind*.5); c.translate(0,-.38); c.scale(1.12,1.12); panShape(c,true);
+    c.strokeStyle='rgba(255,255,255,.45)'; c.lineWidth=.025; c.lineCap='round';
+    for(let i=-1;i<=1;i++){ const o=Math.sin(time*3+i)*.03; c.beginPath(); c.moveTo(i*.1,-.3); c.quadraticCurveTo(i*.1+o+.04,-.4,i*.1+o,-.5); c.stroke(); }
+    c.restore();
   }
   // 身體
   if(st.ghost){ c.fillStyle=st.c2; for(const x of [-.3,0,.3]){ c.beginPath(); c.arc(x,.62,.17,0,TAU); c.fill(); } }
@@ -1133,6 +1193,22 @@ function drawPlush(c,t,cfg,coreId,shieldAmt){
     c.restore();
   }
 }
+function panShape(c,egg){
+  c.fillStyle='#4a4a58'; rr(c,-.035,.2,.07,.14,.03); c.fill();
+  c.fillStyle='#8a5a2b'; rr(c,-.045,.32,.09,.3,.045); c.fill();
+  c.fillStyle='#5b3a17'; c.beginPath(); c.arc(0,.57,.014,0,TAU); c.fill();
+  c.fillStyle='#262631'; c.beginPath(); c.ellipse(0,0,.31,.28,0,0,TAU); c.fill();
+  c.strokeStyle='#7a7a92'; c.lineWidth=.03; c.stroke();
+  const g=c.createRadialGradient(-.08,-.08,.02,0,0,.26); g.addColorStop(0,'#5d5d75'); g.addColorStop(1,'#2e2e3b');
+  c.fillStyle=g; c.beginPath(); c.ellipse(0,.01,.25,.22,0,0,TAU); c.fill();
+  c.fillStyle='rgba(255,255,255,.22)'; c.beginPath(); c.ellipse(-.12,-.1,.08,.035,-.6,0,TAU); c.fill();
+  if(egg){
+    c.fillStyle='#fffdf5';
+    for(const e of [[-.02,.02,.14,.1,.2],[.09,.05,.07,.06,0],[-.1,-.03,.06,.05,0]]){ c.beginPath(); c.ellipse(e[0],e[1],e[2],e[3],e[4],0,TAU); c.fill(); }
+    c.fillStyle='#ffb82e'; c.beginPath(); c.arc(-.03,.01,.05,0,TAU); c.fill();
+    c.fillStyle='rgba(255,255,255,.75)'; c.beginPath(); c.arc(-.045,-.01,.015,0,TAU); c.fill();
+  }
+}
 function drawPalm(c,x,y,sc,rot,flip,alpha){
   const R=U*.42;
   c.save(); c.translate(x,y); c.rotate(rot); c.scale(flip*sc,sc); c.globalAlpha=alpha; c.lineJoin='round';
@@ -1180,6 +1256,24 @@ function render(){
   for(const sp of slapfx){
     const k=1-sp.life/sp.max, sc=lerp(1.6,1,Math.min(1,k/.35)), a=k<.55?.95:.95*(1-(k-.55)/.45);
     drawPalm(ctx,sp.x+sp.side*U*.05,sp.y,sc,sp.rot,sp.side,Math.max(0,a));
+  }
+  if(G) for(const c of G.ctrs){
+    if(c.state==='warn'){
+      const th=c.th, pul=1+.15*Math.sin(time*25);
+      ctx.save(); ctx.translate(th.x,th.y-U*th.size*1.45); ctx.scale(pul,pul);
+      ctx.fillStyle='#ff3b3b'; ctx.strokeStyle='#fff6e4'; ctx.lineWidth=4; ctx.beginPath(); ctx.arc(0,0,U*.15,0,TAU); ctx.fill(); ctx.stroke();
+      utext(ctx,'!',0,U*.01,U*.2,'#fff'); ctx.restore();
+    } else if(c.state==='splat'){
+      ctx.save(); ctx.globalAlpha=clamp(c.life/.3,0,1); ctx.font=(U*.9)+'px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText('💥',c.x,c.y); ctx.restore();
+    } else {
+      ctx.save(); ctx.translate(c.x,c.y);
+      if(c.state==='fly'){ ctx.strokeStyle='rgba(255,122,122,.75)'; ctx.lineWidth=3; ctx.beginPath(); ctx.arc(0,0,c.r*1.35,0,TAU); ctx.stroke(); }
+      ctx.rotate(c.spin); ctx.globalAlpha=c.state==='swat'?clamp(c.life/.4,0,1):1;
+      ctx.shadowColor='rgba(255,255,255,.55)'; ctx.shadowBlur=10;
+      if(c.type==='pan'){ const f=c.r/.3; ctx.scale(f,f); panShape(ctx,true); }
+      else { ctx.font=(c.r*2)+'px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(CTR_EMOJI[c.type]||'💢',0,0); }
+      ctx.restore();
+    }
   }
   // 瞄準
   if(G && G.state==='play' && ptr && ptr.mode==='aim'){
